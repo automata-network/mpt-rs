@@ -85,7 +85,7 @@ impl StateFetcher for NoStateFetcher {
     }
 }
 
-pub trait StateFetcher: Debug + Send + 'static + ProofFetcher + Clone {
+pub trait StateFetcher: ProofFetcher {
     fn with_acc(&self, address: &SH160) -> Self;
     fn get_block_hash(&self, number: u64) -> Result<SH256, Error>;
     fn get_code(&self, address: &SH160) -> Result<HexBytes, Error>;
@@ -113,7 +113,7 @@ where
 impl<F, S> TrieState<F, S>
 where
     F: StateFetcher,
-    S: NodeDB<Node = TrieStorageNode> + Send + 'static,
+    S: NodeDB<Node = TrieStorageNode>,
 {
     pub fn new(fetcher: F, state_root: SH256, db: S) -> Self {
         Self {
@@ -218,7 +218,7 @@ where
 impl<F, S> StateDB for TrieState<F, S>
 where
     F: StateFetcher,
-    S: NodeDB<Node = TrieStorageNode> + Send + 'static,
+    S: NodeDB<Node = TrieStorageNode>,
 {
     type StateAccount = StateAccount;
     fn state_root(&self) -> SH256 {
@@ -353,7 +353,7 @@ where
 
     fn fork(&self) -> Self {
         Self {
-            fetcher: self.fetcher.clone(),
+            fetcher: self.fetcher.fork(),
             accounts: AccountMap::new(self.state_root().into()),
             storages: BTreeMap::new(),
             db: self.db.fork(),
@@ -608,7 +608,7 @@ where
         f: FN,
     ) -> Result<O, rlp::DecoderError>
     where
-        F: ProofFetcher + Debug,
+        F: ProofFetcher,
         S: NodeDB<Node = TrieStorageNode>,
         FN: FnOnce(TrieMapCtx<'_, V, S, F>) -> O,
     {
@@ -670,7 +670,7 @@ where
         origin_key: &[u8],
     ) -> Result<Vec<SH256>, String>
     where
-        F: ProofFetcher + Debug,
+        F: ProofFetcher,
         S: NodeDB<Node = TrieStorageNode>,
     {
         let proofs = fetcher.fetch_proofs(origin_key)?;

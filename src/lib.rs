@@ -8,3 +8,6 @@ pub use trie_state::*;
 
 mod trie;
 pub use trie::*;
+
+mod fetcher;
+pub use fetcher::*;
