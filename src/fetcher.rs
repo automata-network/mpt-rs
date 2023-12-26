@@ -1,7 +1,5 @@
 use std::prelude::v1::*;
 
-use std::sync::Arc;
-
 use base::format::debug;
 use base::trace::AvgCounter;
 use eth_tools::ExecutionClient;

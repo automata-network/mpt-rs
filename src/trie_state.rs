@@ -4,9 +4,9 @@ use crate::{add_nodes, Trie, TrieNode, TrieStorageNode, TrieUpdateResult};
 use base::trace::AvgCounterResult;
 use crypto::keccak_hash;
 use eth_types::{
-    BlockHeader, FetchState, FetchStateResult, HexBytes, StateAccount, SH160, SH256, SU256,
+    FetchState, FetchStateResult, HexBytes, StateAccount, StateAccountTrait, SH160, SH256, SU256,
 };
-use statedb::{Error, NodeDB, StateDB, TrieStateAccount};
+use statedb::{Error, NodeDB, StateDB};
 
 use std::borrow::Cow;
 use std::collections::btree_map::Entry;
@@ -74,13 +74,13 @@ impl StateFetcher for NoStateFetcher {
 
     fn prefetch_states(
         &self,
-        list: &[FetchState],
-        with_proof: bool,
+        _list: &[FetchState],
+        _with_proof: bool,
     ) -> Result<Vec<FetchStateResult>, Error> {
         unimplemented!()
     }
 
-    fn with_acc(&self, address: &SH160) -> Self {
+    fn with_acc(&self, _address: &SH160) -> Self {
         ()
     }
 }
@@ -364,6 +364,71 @@ where
         let val = self.with_storage(address, index, |ctx| ctx.val.0.into())?;
         // glog::info!("get state: {:?}.{:?} => {:?}", address, index, val);
         Ok(val)
+    }
+
+    fn check_missing_state<'a>(
+        &mut self,
+        address: &SH160,
+        storages: &[SH256],
+    ) -> Result<statedb::MissingState, statedb::Error> {
+        let mut missing = statedb::MissingState::default();
+        let root = self.try_with_acc(address, |ctx| (ctx.val.code_hash, ctx.val.root))?;
+        match root {
+            None => {
+                missing.code = true;
+                missing.storages = storages.into();
+            }
+            Some((code_hash, root)) => {
+                missing.code = match self.db.get_code(&code_hash) {
+                    Some(_) => false,
+                    None => true,
+                };
+                if storages.len() > 0 {
+                    let mut empty_trie = StorageMap::new(root.into());
+                    let storage = match self.storages.get_mut(&address) {
+                        None => &mut empty_trie,
+                        Some(storage) => storage.as_mut(),
+                    };
+
+                    for key in storages {
+                        let exists = storage
+                            .try_with_key(&mut self.db, &key, |_| ())
+                            .map_err(|err| Error::DecodeError(err))?
+                            .is_some();
+                        if !exists {
+                            missing.storages.push(key.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(missing)
+    }
+
+    fn apply_states(&mut self, result: Vec<FetchStateResult>) -> Result<(), Error> {
+        for FetchStateResult { acc, code } in result {
+            if let Some(acc) = acc {
+                let nodes = TrieNode::from_proofs(&mut self.db, &acc.account_proof).unwrap();
+                for node in nodes {
+                    if let TrieNode::Embedded(node) = node {
+                        self.db.add_node(&node);
+                    }
+                }
+                for storage in acc.storage_proof {
+                    let nodes = TrieNode::from_proofs(&mut self.db, &storage.proof).unwrap();
+                    for node in nodes {
+                        if let TrieNode::Embedded(node) = node {
+                            self.db.add_node(&node);
+                        }
+                    }
+                }
+            }
+            if let Some(code) = code {
+                let hash = keccak_hash(&code).into();
+                self.db.set_code(hash, Cow::Owned(code));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -689,5 +754,70 @@ where
         // }
         // sanity check?
         Ok(proof_nodes.iter().map(|n| n.hash().clone()).collect())
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TrieStateAccount<T: StateAccountTrait>(pub T);
+
+impl<T: StateAccountTrait> rlp::Encodable for TrieStateAccount<T> {
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
+        if self.0.is_exist() {
+            self.0.rlp_append(s)
+        }
+    }
+}
+
+impl<T: StateAccountTrait> rlp::Decodable for TrieStateAccount<T> {
+    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+        Ok(Self(rlp::Decodable::decode(rlp)?))
+    }
+}
+
+impl<T: StateAccountTrait> std::ops::Deref for TrieStateAccount<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: StateAccountTrait> std::ops::DerefMut for TrieStateAccount<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: StateAccountTrait> TrieStateAccount<T> {
+    pub fn suicide(&mut self, dirty: &mut bool) {
+        if self.0.is_exist() {
+            self.0 = T::default();
+            *dirty = true;
+        }
+    }
+
+    pub fn set_balance(&mut self, dirty: &mut bool, val: SU256) {
+        if self.0.set_balance(val) {
+            *dirty = true;
+        }
+    }
+
+    pub fn set_nonce(&mut self, dirty: &mut bool, val: u64) {
+        if self.0.set_nonce(val) {
+            *dirty = true;
+        }
+    }
+
+    pub fn set_code<N: NodeDB>(&mut self, dirty: &mut bool, code: Vec<u8>, db: &mut N) {
+        if self.0.set_code(&code) {
+            let hash = keccak_hash(&code).into();
+            db.set_code(hash, Cow::Owned(code.into()));
+            *dirty = true;
+        }
+    }
+
+    pub fn update_root(&mut self, dirty: &mut bool, root: SH256) {
+        if self.0.update_root(root) {
+            *dirty = true;
+        }
     }
 }
