@@ -11,3 +11,6 @@ pub use trie::*;
 
 mod fetcher;
 pub use fetcher::*;
+
+mod database;
+pub use database::*;
