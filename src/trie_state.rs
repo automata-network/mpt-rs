@@ -6,7 +6,7 @@ use crypto::keccak_hash;
 use eth_types::{
     FetchState, FetchStateResult, HexBytes, StateAccount, StateAccountTrait, SH160, SH256, SU256,
 };
-use statedb::{Error, NodeDB, StateDB};
+use statedb::{Error, NodeDB, ProofFetcher, StateDB, StateFetcher};
 
 use std::borrow::Cow;
 use std::collections::btree_map::Entry;
@@ -24,80 +24,6 @@ pub struct TrieState<F, D: NodeDB> {
     storages: BTreeMap<SH160, Box<StorageMap>>,
     db: D,
     fetcher: F,
-}
-
-pub type NoStateFetcher = ();
-
-impl ProofFetcher for NoStateFetcher {
-    fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
-        Err(format!("key not found for proofs: {:?}", key))
-    }
-
-    fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
-        Err(format!("nodes not found: {:?}", node))
-    }
-}
-
-impl StateFetcher for NoStateFetcher {
-    fn fork(&self) -> Self {
-        ()
-    }
-
-    fn get_account(&self, address: &SH160) -> Result<(SU256, u64, HexBytes), Error> {
-        Err(Error::WithKey(format!("account[{:?}] not found", address)))
-    }
-
-    fn get_block_hash(&self, number: u64) -> Result<SH256, Error> {
-        Err(Error::WithKey(format!(
-            "block_hash[{:?}] not found",
-            number
-        )))
-    }
-
-    fn get_code(&self, address: &SH160) -> Result<HexBytes, Error> {
-        Err(Error::WithKey(format!(
-            "account code[{:?}] not found",
-            address
-        )))
-    }
-
-    fn get_miss_usage(&self) -> AvgCounterResult {
-        AvgCounterResult::default()
-    }
-
-    fn get_storage(&self, address: &SH160, key: &SH256) -> Result<SH256, Error> {
-        Err(Error::WithKey(format!(
-            "account storage[{:?} {:?}] not found",
-            address, key
-        )))
-    }
-
-    fn prefetch_states(
-        &self,
-        _list: &[FetchState],
-        _with_proof: bool,
-    ) -> Result<Vec<FetchStateResult>, Error> {
-        unimplemented!()
-    }
-
-    fn with_acc(&self, _address: &SH160) -> Self {
-        ()
-    }
-}
-
-pub trait StateFetcher: ProofFetcher {
-    fn with_acc(&self, address: &SH160) -> Self;
-    fn get_block_hash(&self, number: u64) -> Result<SH256, Error>;
-    fn get_code(&self, address: &SH160) -> Result<HexBytes, Error>;
-    fn get_account(&self, address: &SH160) -> Result<(SU256, u64, HexBytes), Error>;
-    fn get_storage(&self, address: &SH160, key: &SH256) -> Result<SH256, Error>;
-    fn fork(&self) -> Self;
-    fn get_miss_usage(&self) -> AvgCounterResult;
-    fn prefetch_states(
-        &self,
-        list: &[FetchState],
-        with_proof: bool,
-    ) -> Result<Vec<FetchStateResult>, Error>;
 }
 
 impl<F, S> Clone for TrieState<F, S>
@@ -313,6 +239,7 @@ where
     }
 
     fn flush(&mut self) -> Result<SH256, Error> {
+        let old_root = self.accounts.root_hash().clone();
         let mut reduction_nodes = self.try_flush();
         if reduction_nodes.len() > 0 {
             let nodes = self
@@ -326,14 +253,14 @@ where
         }
 
         self.db.commit();
-        let hash = self.accounts.root_hash().clone().into();
+        let new_root = self.accounts.root_hash().clone().into();
         assert!(
-            self.db.get(&hash).is_some(),
-            "fail to load root: {:?}",
-            hash
+            self.db.get(&new_root).is_some() || old_root == new_root,
+            "flush: new state_root is missing in db: {:?}",
+            new_root
         );
         // glog::info!("trieState: after flush: {:?}", hash);
-        Ok(hash)
+        Ok(new_root)
     }
 
     fn get_balance(&mut self, address: &SH160) -> Result<SU256, Error> {
@@ -479,12 +406,6 @@ pub struct TrieMap<K, V> {
     trie: Trie,
     cache: BTreeMap<K, V>,
     dirty: BTreeMap<K, ()>,
-}
-
-pub trait ProofFetcher {
-    fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String>;
-    fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String>;
-    // fn get_node(&self, key: &HexBytes) -> Result<HexBytes, String>;
 }
 
 pub struct TrieMapCtx<'a, V, S, F> {

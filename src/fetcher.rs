@@ -9,7 +9,7 @@ use eth_types::{
 };
 use std::borrow::Cow;
 
-use crate::{ProofFetcher, StateFetcher};
+use statedb::{ProofFetcher, StateFetcher};
 
 #[derive(Debug)]
 pub struct BlockStateFetcher<C, E, T>
