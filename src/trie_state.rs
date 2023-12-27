@@ -628,7 +628,7 @@ where
                     return Ok(out);
                 }
                 Err(missing_hash) => {
-                    glog::info!("missing_hash: {:?}", missing_hash);
+                    // glog::info!("missing_hash: {:?}", missing_hash);
                     if !fetched {
                         fetched = true;
                         let data = self.fetch_key(store, fetcher, origin_key).unwrap();

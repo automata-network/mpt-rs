@@ -2,12 +2,15 @@ use std::prelude::v1::*;
 
 use base::format::debug;
 use base::trace::AvgCounter;
+use core::marker::PhantomData;
 use eth_tools::ExecutionClient;
 use eth_types::{
     BlockHeaderTrait, BlockSelector, FetchState, FetchStateResult, HexBytes,
     TransactionAccessTuple, H160, H256, SH160, SH256, SU256,
 };
 use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use statedb::{ProofFetcher, StateFetcher};
 
@@ -181,5 +184,104 @@ where
         self.client()
             .get_dbnodes(node)
             .map_err(|err| format!("{:?}", err))
+    }
+}
+
+#[derive(Clone)]
+pub struct ReductionNodeFetcher<C, E, T>
+where
+    C: eth_tools::RpcClient,
+    E: eth_types::EngineTypes,
+    T: AsRef<ExecutionClient<C, E>>,
+{
+    client: T,
+    phantom: PhantomData<(C, E, T)>,
+    nodes: Arc<Mutex<BTreeMap<SH256, HexBytes>>>,
+}
+
+impl<C, E, T> ReductionNodeFetcher<C, E, T>
+where
+    C: eth_tools::RpcClient,
+    E: eth_types::EngineTypes,
+    T: AsRef<ExecutionClient<C, E>>,
+{
+    pub fn new(client: T) -> Self {
+        Self {
+            client,
+            phantom: PhantomData,
+            nodes: Default::default(),
+        }
+    }
+
+    pub fn take(&mut self) -> BTreeMap<SH256, HexBytes> {
+        let mut nodes = self.nodes.lock().unwrap();
+        let mut new = BTreeMap::new();
+        std::mem::swap(&mut new, &mut nodes);
+        new
+    }
+}
+
+impl<C, E, T> ProofFetcher for ReductionNodeFetcher<C, E, T>
+where
+    C: eth_tools::RpcClient,
+    E: eth_types::EngineTypes,
+    T: AsRef<ExecutionClient<C, E>>,
+{
+    fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
+        ().fetch_proofs(key)
+    }
+
+    fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
+        let results = self.client.as_ref().get_dbnodes(node).map_err(debug)?;
+        {
+            let mut nodes = self.nodes.lock().unwrap();
+            for (idx, item) in node.iter().enumerate() {
+                nodes.insert(*item, results[idx].clone());
+            }
+        }
+        Ok(results)
+    }
+}
+
+impl<C, E, T> StateFetcher for ReductionNodeFetcher<C, E, T>
+where
+    C: eth_tools::RpcClient + Clone,
+    E: eth_types::EngineTypes + Clone,
+    T: AsRef<ExecutionClient<C, E>> + Clone,
+{
+    fn fork(&self) -> Self {
+        self.clone()
+    }
+
+    fn get_account(&self, address: &SH160) -> Result<(SU256, u64, HexBytes), statedb::Error> {
+        ().get_account(address)
+    }
+
+    fn get_block_hash(&self, number: u64) -> Result<SH256, statedb::Error> {
+        ().get_block_hash(number)
+    }
+
+    fn get_code(&self, address: &SH160) -> Result<HexBytes, statedb::Error> {
+        ().get_code(address)
+    }
+
+    fn get_miss_usage(&self) -> base::trace::AvgCounterResult {
+        ().get_miss_usage()
+    }
+
+    fn get_storage(&self, address: &SH160, key: &SH256) -> Result<SH256, statedb::Error> {
+        ().get_storage(address, key)
+    }
+
+    fn prefetch_states(
+        &self,
+        list: &[FetchState],
+        with_proof: bool,
+    ) -> Result<Vec<FetchStateResult>, statedb::Error> {
+        ().prefetch_states(list, with_proof)
+    }
+
+    fn with_acc(&self, address: &SH160) -> Self {
+        self.fork()
     }
 }
