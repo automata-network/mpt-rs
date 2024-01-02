@@ -3,6 +3,7 @@ use std::prelude::v1::*;
 use base::format::debug;
 use base::trace::AvgCounter;
 use core::marker::PhantomData;
+use crypto::keccak_hash;
 use eth_tools::ExecutionClient;
 use eth_types::{
     BlockHeaderTrait, BlockSelector, FetchState, FetchStateResult, HexBytes,
@@ -12,7 +13,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use statedb::{ProofFetcher, StateFetcher};
+use statedb::{NoStateFetcher, ProofFetcher, StateFetcher};
 
 #[derive(Debug)]
 pub struct BlockStateFetcher<C, E, T>
@@ -68,14 +69,14 @@ where
 
 impl<C, E, T> StateFetcher for BlockStateFetcher<C, E, T>
 where
-    C: eth_tools::RpcClient + std::fmt::Debug,
-    E: eth_types::EngineTypes + std::fmt::Debug,
-    T: AsRef<ExecutionClient<C, E>> + std::fmt::Debug + Clone,
+    C: eth_tools::RpcClient,
+    E: eth_types::EngineTypes,
+    T: AsRef<ExecutionClient<C, E>> + Clone,
 {
     fn with_acc(&self, address: &SH160) -> Self {
-        let mut acc = self.clone();
-        acc.acc = Some(address.clone());
-        acc
+        let mut storage_fetcher = self.clone();
+        storage_fetcher.acc = Some(address.clone());
+        storage_fetcher
     }
 
     fn fork(&self) -> Self {
@@ -188,27 +189,25 @@ where
 }
 
 #[derive(Clone)]
-pub struct ReductionNodeFetcher<C, E, T>
+pub struct StateCollector<C, E, T>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
     T: AsRef<ExecutionClient<C, E>>,
 {
-    client: T,
-    phantom: PhantomData<(C, E, T)>,
+    fetcher: BlockStateFetcher<C, E, T>,
     nodes: Arc<Mutex<BTreeMap<SH256, HexBytes>>>,
 }
 
-impl<C, E, T> ReductionNodeFetcher<C, E, T>
+impl<C, E, T> StateCollector<C, E, T>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
     T: AsRef<ExecutionClient<C, E>>,
 {
-    pub fn new(client: T) -> Self {
+    pub fn new(client: T, blk: BlockSelector) -> Self {
         Self {
-            client,
-            phantom: PhantomData,
+            fetcher: BlockStateFetcher::new(client, blk),
             nodes: Default::default(),
         }
     }
@@ -221,18 +220,26 @@ where
     }
 }
 
-impl<C, E, T> ProofFetcher for ReductionNodeFetcher<C, E, T>
+impl<C, E, T> ProofFetcher for StateCollector<C, E, T>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
     T: AsRef<ExecutionClient<C, E>>,
 {
     fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
-        ().fetch_proofs(key)
+        let nodes = self.fetcher.fetch_proofs(key)?;
+        {
+            let mut caches = self.nodes.lock().unwrap();
+            for node in &nodes {
+                let hash = keccak_hash(&node).into();
+                caches.insert(hash, node.clone());
+            }
+        }
+        Ok(nodes)
     }
 
     fn get_nodes(&self, node: &[SH256]) -> Result<Vec<HexBytes>, String> {
-        let results = self.client.as_ref().get_dbnodes(node).map_err(debug)?;
+        let results = self.fetcher.get_nodes(node)?;
         {
             let mut nodes = self.nodes.lock().unwrap();
             for (idx, item) in node.iter().enumerate() {
@@ -243,7 +250,7 @@ where
     }
 }
 
-impl<C, E, T> StateFetcher for ReductionNodeFetcher<C, E, T>
+impl<C, E, T> StateFetcher for StateCollector<C, E, T>
 where
     C: eth_tools::RpcClient + Clone,
     E: eth_types::EngineTypes + Clone,
@@ -282,6 +289,10 @@ where
     }
 
     fn with_acc(&self, address: &SH160) -> Self {
-        self.fork()
+        let fetcher = self.fetcher.with_acc(address);
+        Self {
+            fetcher,
+            nodes: self.nodes.clone(),
+        }
     }
 }

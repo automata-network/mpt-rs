@@ -127,16 +127,16 @@ where
         account_dirty += self.accounts.dirty.len();
         let nodes = self.accounts.flush(&mut self.db);
         reduction_nodes.extend(nodes);
-        // glog::info!(
-        //     exclude:"dry_run",
-        //     "flush storages({}): {:?}, flush acc({}): {:?}, total: {:?}, reduction: {}",
-        //     storage_dirty,
-        //     start_flush_acc - start,
-        //     account_dirty,
-        //     start_flush_acc.elapsed(),
-        //     start.elapsed(),
-        //     reduction_nodes.len(),
-        // );
+        glog::debug!(
+            target: "state_flush",
+            "flush storages({}): {:?}, flush acc({}): {:?}, total: {:?}, reduction: {}",
+            storage_dirty,
+            start_flush_acc - start,
+            account_dirty,
+            start_flush_acc.elapsed(),
+            start.elapsed(),
+            reduction_nodes.len(),
+        );
         reduction_nodes.into_iter().map(|n| n.into()).collect()
     }
 }
