@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 pub struct Database {
-    db: statedb::MemStore<TrieStorageNode, NodeHasher>,
+    db: statedb::BTreeStore<TrieStorageNode, NodeHasher>,
 }
 
 pub struct NodeHasher;
@@ -19,9 +19,9 @@ impl statedb::Hasher<TrieStorageNode> for NodeHasher {
 }
 
 impl Database {
-    pub fn new(cap: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            db: statedb::MemStore::new(cap),
+            db: statedb::BTreeStore::new(),
         }
     }
 

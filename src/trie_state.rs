@@ -1,11 +1,8 @@
 use std::prelude::v1::*;
 
 use crate::{add_nodes, Trie, TrieNode, TrieStorageNode, TrieUpdateResult};
-use base::trace::AvgCounterResult;
 use crypto::keccak_hash;
-use eth_types::{
-    FetchState, FetchStateResult, HexBytes, StateAccount, StateAccountTrait, SH160, SH256, SU256,
-};
+use eth_types::{FetchStateResult, HexBytes, StateAccount, StateAccountTrait, SH160, SH256, SU256};
 use statedb::{Error, NodeDB, ProofFetcher, StateDB, StateFetcher};
 
 use std::borrow::Cow;

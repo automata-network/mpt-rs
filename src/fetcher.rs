@@ -2,7 +2,6 @@ use std::prelude::v1::*;
 
 use base::format::debug;
 use base::trace::AvgCounter;
-use core::marker::PhantomData;
 use crypto::keccak_hash;
 use eth_tools::ExecutionClient;
 use eth_types::{
@@ -13,27 +12,25 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use statedb::{NoStateFetcher, ProofFetcher, StateFetcher};
+use statedb::{ProofFetcher, StateFetcher};
 
 #[derive(Debug)]
-pub struct BlockStateFetcher<C, E, T>
+pub struct BlockStateFetcher<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
-    client: T,
+    client: ExecutionClient<C, E>,
     blk: BlockSelector,
     acc: Option<SH160>,
     counter: AvgCounter,
     phantom: std::marker::PhantomData<(C, E)>,
 }
 
-impl<C, E, T> Clone for BlockStateFetcher<C, E, T>
+impl<C, E> Clone for BlockStateFetcher<C, E>
 where
-    C: eth_tools::RpcClient,
-    E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>> + Clone,
+    C: eth_tools::RpcClient + Clone,
+    E: eth_types::EngineTypes + Clone,
 {
     fn clone(&self) -> Self {
         BlockStateFetcher {
@@ -46,13 +43,12 @@ where
     }
 }
 
-impl<C, E, T> BlockStateFetcher<C, E, T>
+impl<C, E> BlockStateFetcher<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
-    pub fn new(client: T, blk: BlockSelector) -> Self {
+    pub fn new(client: ExecutionClient<C, E>, blk: BlockSelector) -> Self {
         Self {
             client,
             acc: None,
@@ -63,15 +59,14 @@ where
     }
 
     fn client(&self) -> &ExecutionClient<C, E> {
-        self.client.as_ref()
+        &self.client
     }
 }
 
-impl<C, E, T> StateFetcher for BlockStateFetcher<C, E, T>
+impl<C, E> StateFetcher for BlockStateFetcher<C, E>
 where
-    C: eth_tools::RpcClient,
-    E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>> + Clone,
+    C: eth_tools::RpcClient + Clone,
+    E: eth_types::EngineTypes + Clone,
 {
     fn with_acc(&self, address: &SH160) -> Self {
         let mut storage_fetcher = self.clone();
@@ -147,11 +142,10 @@ where
     }
 }
 
-impl<C, E, T> ProofFetcher for BlockStateFetcher<C, E, T>
+impl<C, E> ProofFetcher for BlockStateFetcher<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
     fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
         let _counter = self.counter.place();
@@ -189,23 +183,21 @@ where
 }
 
 #[derive(Clone)]
-pub struct StateCollector<C, E, T>
+pub struct StateCollector<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
-    fetcher: BlockStateFetcher<C, E, T>,
+    fetcher: BlockStateFetcher<C, E>,
     nodes: Arc<Mutex<BTreeMap<SH256, HexBytes>>>,
 }
 
-impl<C, E, T> StateCollector<C, E, T>
+impl<C, E> StateCollector<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
-    pub fn new(client: T, blk: BlockSelector) -> Self {
+    pub fn new(client: ExecutionClient<C, E>, blk: BlockSelector) -> Self {
         Self {
             fetcher: BlockStateFetcher::new(client, blk),
             nodes: Default::default(),
@@ -220,11 +212,10 @@ where
     }
 }
 
-impl<C, E, T> ProofFetcher for StateCollector<C, E, T>
+impl<C, E> ProofFetcher for StateCollector<C, E>
 where
     C: eth_tools::RpcClient,
     E: eth_types::EngineTypes,
-    T: AsRef<ExecutionClient<C, E>>,
 {
     fn fetch_proofs(&self, key: &[u8]) -> Result<Vec<HexBytes>, String> {
         let nodes = self.fetcher.fetch_proofs(key)?;
@@ -250,11 +241,10 @@ where
     }
 }
 
-impl<C, E, T> StateFetcher for StateCollector<C, E, T>
+impl<C, E> StateFetcher for StateCollector<C, E>
 where
     C: eth_tools::RpcClient + Clone,
     E: eth_types::EngineTypes + Clone,
-    T: AsRef<ExecutionClient<C, E>> + Clone,
 {
     fn fork(&self) -> Self {
         self.clone()
